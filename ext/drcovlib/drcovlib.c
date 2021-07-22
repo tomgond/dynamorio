@@ -77,12 +77,22 @@ typedef struct _per_thread_t {
     char logname[MAXIMUM_PATH];
 } per_thread_t;
 
+typedef struct _target_module_ex_t{
+    char module_name[MAXIMUM_PATH];
+    app_pc start;
+    app_pc end;
+    struct _target_module_ex_t *next;
+} target_module_ex_t;
+
+static target_module_ex_t *target_module;
+
 static per_thread_t *global_data;
 static bool drcov_per_thread = false;
 #ifndef WINDOWS
 static int sysnum_execve = IF_X64_ELSE(59, 11);
 #endif
 static volatile bool go_native;
+
 static int tls_idx = -1;
 static int drcovlib_init_count;
 
@@ -325,14 +335,34 @@ static dr_emit_flags_t
 event_basic_block_analysis(void *drcontext, void *tag, instrlist_t *bb, bool for_trace,
                            bool translating, OUT void **user_data)
 {
+    // dr_printf("new_bb\n");
     per_thread_t *data;
     instr_t *instr;
     app_pc tag_pc, start_pc, end_pc;
 
+	start_pc = instr_get_app_pc(instrlist_first_app(bb));
+    target_module_ex_t *iter = target_module;
+    
+	if (iter!=NULL){
+		bool to_continue = false;
+		while (iter){
+			if (start_pc >= iter->start && start_pc < iter->end){
+					to_continue = true;
+					break;
+			}
+			iter = iter->next;
+		}
+		if (to_continue == false) {
+			if (go_native)
+				return DR_EMIT_GO_NATIVE;
+			else
+				return DR_EMIT_DEFAULT;
+		}
+	}
+
     /* do nothing for translation */
     if (translating)
         return DR_EMIT_DEFAULT;
-
     data = (per_thread_t *)drmgr_get_tls_field(drcontext, tls_idx);
     /* Collect the number of instructions and the basic block size,
      * assuming the basic block does not have any elision on control
@@ -343,7 +373,7 @@ event_basic_block_analysis(void *drcontext, void *tag, instrlist_t *bb, bool for
      * such as for the vsyscall hook.
      */
     tag_pc = dr_fragment_app_pc(tag);
-    start_pc = instr_get_app_pc(instrlist_first_app(bb));
+    
     end_pc = start_pc; /* for finding the size */
     for (instr = instrlist_first_app(bb); instr != NULL;
          instr = instr_get_next_app(instr)) {
@@ -433,6 +463,21 @@ event_thread_init(void *drcontext)
     else
         data = thread_data_copy(drcontext);
     drmgr_set_tls_field(drcontext, tls_idx, data);
+}
+
+static void
+event_module_load(void *drcontext, const module_data_t *data, bool loaded)
+{
+    target_module_ex_t *iter = target_module;
+    while (iter!=NULL) {
+		if (strcmp(iter->module_name, dr_module_preferred_name(data)) == 0) {
+            dr_printf("We found a match. Adding data to target_module_ex_t\n");
+            iter->start = data->start;
+            iter->end = data->end;
+            break;
+		}
+        iter = iter->next;
+	}
 }
 
 #ifndef WINDOWS
@@ -529,10 +574,16 @@ event_init(void)
     res = drmodtrack_init();
     if (res != DRCOVLIB_SUCCESS)
         return res;
-
+    
+	drmgr_register_module_load_event(event_module_load);
     /* create process data if whole process bb coverage. */
-    if (!drcov_per_thread)
-        global_data = global_data_create();
+        if (!drcov_per_thread) {
+			global_data = global_data_create();
+			size_t global_data_hex_str_size = 2 + sizeof(void *) * 2; // "0x" (2) + 2*bytes  e.g 0xdeaddead
+			char *global_data_hex_str = dr_global_alloc(global_data_hex_str_size);
+            dr_snprintf(global_data_hex_str, global_data_hex_str_size, "0x%x", global_data);
+			SetEnvironmentVariableA("dr_global_data", global_data_hex_str);
+        }
     return DRCOVLIB_SUCCESS;
 }
 
@@ -563,7 +614,30 @@ drcovlib_init(drcovlib_options_t *ops)
         options.logprefix = "drcov";
     if (options.native_until_thread > 0)
         go_native = true;
-
+    
+	if (options.target_modules != NULL) {
+        target_module_t *cur_module = options.target_modules;
+		target_module_ex_t *prev = target_module;
+        while (cur_module != NULL) {
+            target_module = dr_global_alloc(sizeof(target_module_ex_t));
+            target_module->next = prev;
+			dr_printf("Current module is: %s\n", cur_module->module_name);
+            NULL_TERMINATE_BUFFER(cur_module->module_name);
+			dr_snprintf(target_module->module_name, MAX_PATH, "%s", cur_module->module_name);
+            prev = target_module;
+			cur_module = cur_module->next;
+		}
+	}
+    if (target_module) {
+		dr_printf("Received target module to trac	k:\n");
+        target_module_ex_t *t = target_module;
+		while (t != NULL) {
+            dr_printf("%s\n", t->module_name);
+            t = t->next;
+		}
+    } else {
+        dr_printf("No target module was specified\n");
+	}
     drmgr_init();
     drx_init();
 
@@ -585,6 +659,7 @@ drcovlib_init(drcovlib_options_t *ops)
 #endif
 
     tls_idx = drmgr_register_tls_field();
+    
     if (tls_idx == -1)
         return DRCOVLIB_ERROR;
 

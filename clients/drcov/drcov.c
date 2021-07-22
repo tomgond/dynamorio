@@ -123,9 +123,10 @@ options_init(client_id_t id, int argc, const char *argv[], drcovlib_options_t *o
 {
     int i;
     const char *token;
+    target_module_t *target_modules;
+
     /* default values */
     nudge_kills = true;
-
     for (i = 1 /*skip client*/; i < argc; i++) {
         token = argv[i];
         if (strcmp(token, "-dump_text") == 0)
@@ -155,9 +156,19 @@ options_init(client_id_t id, int argc, const char *argv[], drcovlib_options_t *o
             USAGE_CHECK((i + 1) < argc, "missing -verbose number");
             token = argv[++i];
             if (dr_sscanf(token, "%u", &verbose) != 1) {
-                USAGE_CHECK(false, "invalid -verbose number");
+                USAGE_CHECK(false, "invalid -verbose command");
             }
-        } else {
+
+        } else if (strcmp(token, "-coverage_module") == 0) {
+            USAGE_CHECK((i + 1) < argc, "missing module");
+            target_modules = ops->target_modules;
+            ops->target_modules =
+                (target_module_t *)dr_global_alloc(sizeof(target_module_t));
+            ops->target_modules->next = target_modules;
+            strncpy(ops->target_modules->module_name, argv[++i],
+                    BUFFER_SIZE_ELEMENTS(ops->target_modules->module_name));
+        }
+		else {
             NOTIFY(0, "UNRECOGNIZED OPTION: \"%s\"\n", token);
             USAGE_CHECK(false, "invalid option");
         }
@@ -169,6 +180,8 @@ options_init(client_id_t id, int argc, const char *argv[], drcovlib_options_t *o
 DR_EXPORT void
 dr_client_main(client_id_t id, int argc, const char *argv[])
 {
+    dr_enable_console_printing();
+    dr_printf("dr_client_main (drcove)\n");
     drcovlib_options_t ops = {
         sizeof(ops),
     };

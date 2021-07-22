@@ -362,6 +362,10 @@ drmodtrack_init(void)
 
     memset(module_table.cache, 0, sizeof(module_table.cache));
     drvector_init(&module_table.vector, 16, false, module_table_entry_free);
+    size_t modules_addr_hex_size = 2 + sizeof(void *) * 2;  // "0x" (2) + 2*bytes  e.g 0xdeaddead
+    char* modules_hex = dr_global_alloc(modules_addr_hex_size);
+    dr_snprintf(modules_hex, modules_addr_hex_size, "0x%x", &module_table);
+    SetEnvironmentVariableA("dr_module_table", modules_hex);
 
     return DRCOVLIB_SUCCESS;
 }

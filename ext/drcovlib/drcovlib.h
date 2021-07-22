@@ -80,6 +80,11 @@ typedef enum {
     DRCOVLIB_THREAD_PRIVATE = 0x0002,
 } drcovlib_flags_t;
 
+typedef struct _target_module_t {
+    char module_name[MAXIMUM_PATH];
+    struct _target_module_t *next;
+} target_module_t;
+
 /** Specifies the options when initializing drcovlib. */
 typedef struct _drcovlib_options_t {
     /** Set this to the size of this structure. */
@@ -102,6 +107,12 @@ typedef struct _drcovlib_options_t {
      * option, is created.  This option only works under Windows.
      */
     int native_until_thread;
+
+    /*
+     *  Only collect coverage about these modules
+     */
+    target_module_t *target_modules;
+
 } drcovlib_options_t;
 
 /***************************************************************************

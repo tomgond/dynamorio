@@ -52,6 +52,7 @@ typedef struct _module_table_t {
     module_entry_t *cache[NUM_GLOBAL_MODULE_CACHE];
 } module_table_t;
 
+
 void
 module_table_load(module_table_t *table, const module_data_t *data);
 
